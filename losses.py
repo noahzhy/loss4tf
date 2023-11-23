@@ -156,9 +156,9 @@ class CTCLoss(Layer):
 # ctc center loss
 class CTCCenterLoss(Layer):
     def __init__(self, 
-        alpha=0.5,
+        alpha=0.05,
         num_classes=86,
-        features=None,
+        feat_dims=128,
         center_file_path=None,
         name="ctc_center_loss",
         **kwargs):
@@ -166,67 +166,45 @@ class CTCCenterLoss(Layer):
 
         self.alpha = alpha
         self.num_classes = num_classes
-        self.features = features
-        self.centers = None
+        self.feat_dims = feat_dims
+        self.centers = tf.Variable(
+            initial_value=tf.zeros(shape=(num_classes, feat_dims), dtype=tf.float32, name="centers"),
+            trainable=False,
+            name="centers",
+        )
+        # random init centers
+        self.centers.assign(tf.random.normal(shape=(num_classes, feat_dims), mean=0.0, stddev=1.0))
 
-        if center_file_path is not None:
-            # use tf2.0
-            self.centers = tf.Variable(tf.io.read_file(center_file_path), trainable=False)
-        else:
-            self.centers = self.add_weight(
-                name="centers",
-                shape=[num_classes, features],
-                initializer=tf.keras.initializers.RandomNormal(),
-                dtype=tf.float32,
-                trainable=False,
-            )
-
-    def call(self, y_true, y_pred):
-        """获取center loss及center的更新op
-
-        Arguments:
-            features: Tensor,表征样本特征,一般使用某个fc层的输出,shape应该为[batch_size, feature_length].
-            labels: Tensor,表征样本label,非one-hot编码,shape应为[batch_size].
-            alpha: 0-1之间的数字,控制样本类别中心的学习率,细节参考原文.
-            num_classes: 整数,表明总共有多少个类别,网络分类输出有多少个神经元这里就取多少.
-            verbose: 打印中间过程
-
-        Return:
-            loss: Tensor,可与softmax loss相加作为总的loss进行优化.
-            centers: Tensor,存储样本中心值的Tensor,仅查看样本中心存储的具体数值时有用.
-            centers_update_op: op,用于更新样本中心的op,在训练时需要同时运行该op,否则样本中心不会更新
+    def call(self, y_pred, y_true, **kwargs):
         """
-        # 获取特征的维数，例如128维
-        len_features = features.get_shape()[1]
+        Args:
+            y_pred: [batch_size, seq_len, feat_dims]
+            y_true: [batch_size]
+        """
+        _, _, feat_dims = tf.shape(y_pred)
+        y_pred = tf.reshape(y_pred, shape=(-1, feat_dims))
+        y_true = tf.reshape(y_true, shape=(-1, ))
+        bs = tf.shape(y_true)[0]
 
-        # 建立一个Variable,shape为[num_classes, len_features]，用于存储整个网络的样本中心，
-        # 设置trainable=False是因为样本中心不是由梯度进行更新的
-        centers = tf.get_variable('centers', [num_classes, len_features], dtype=tf.float32,
-                                  initializer=tf.constant_initializer(0), trainable=False)
-        # 将label展开为一维的，输入如果已经是一维的，则该动作其实无必要
-        labels = tf.reshape(labels, [-1])
-        print('tf.shape(labels):', tf.shape(labels))
+        distmat = tf.pow(y_pred, 2)
+        distmat = tf.reduce_sum(distmat, axis=1, keepdims=True)
+        distmat = tf.tile(distmat, multiples=(1, self.num_classes))
+        distmat = tf.subtract(distmat, 2 * tf.matmul(y_pred, tf.transpose(self.centers)))
+        distmat = tf.add(distmat, tf.transpose(tf.reduce_sum(tf.pow(self.centers, 2), axis=1, keepdims=True)))
 
-        # 构建label
-        # 根据样本label,获取mini-batch中每一个样本对应的中心值
-        centers_batch = tf.gather(centers, labels)
-        # 计算loss
-        loss = tf.nn.l2_loss(features - centers_batch)
+        # mask
+        classes = tf.range(self.num_classes, dtype=tf.int32)
+        labels = tf.tile(tf.expand_dims(y_true, axis=1), multiples=(1, self.num_classes))
+        mask = tf.math.equal(labels, classes)
+        mask = tf.cast(mask, dtype=tf.float32)
 
-        # 当前mini-batch的特征值与它们对应的中心值之间的差
-        diff = centers_batch - features
+        # compute loss
+        dist = tf.multiply(distmat, tf.cast(mask, dtype=tf.float32))
+        # clamp dist
+        dist = tf.clip_by_value(dist, clip_value_min=1e-12, clip_value_max=1e+12)
+        loss = tf.reduce_sum(dist) / tf.cast(bs, dtype=tf.float32)
 
-        # 获取mini-batch中同一类别样本出现的次数,了解原理请参考原文公式(4)
-        unique_label, unique_idx, unique_count = tf.unique_with_counts(labels)
-        appear_times = tf.gather(unique_count, unique_idx)
-        appear_times = tf.reshape(appear_times, [-1, 1])
-
-        diff = diff / tf.cast((1 + appear_times), tf.float32)
-        diff = alpha * diff
-
-        centers_update_op = tf.scatter_sub(centers, labels, diff)
-
-        return loss, centers, centers_update_op
+        return loss
 
 
 # main
@@ -234,3 +212,8 @@ if __name__ == '__main__':
     # check version of tensorflow
     print(tf.__version__)
     loss = CTCCenterLoss()
+    features = tf.random.normal(shape=(32, 16, 128))
+    # labels: int32
+    labels = tf.random.uniform(shape=(32, 16), minval=0, maxval=86, dtype=tf.int32)
+    l = loss(features, labels)
+    print(l)
