@@ -1,5 +1,6 @@
 from itertools import groupby
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import backend as K
 from tensorflow.keras.losses import Loss
@@ -159,7 +160,7 @@ class CTCCenterLoss(Layer):
         alpha=0.05,
         num_classes=86,
         feat_dims=128,
-        center_file_path=None,
+        random_init=True,
         name="ctc_center_loss",
         **kwargs):
         super(CTCCenterLoss, self).__init__(name=name, **kwargs)
@@ -173,7 +174,8 @@ class CTCCenterLoss(Layer):
             name="centers",
         )
         # random init centers
-        self.centers.assign(tf.random.normal(shape=(num_classes, feat_dims), mean=0.0, stddev=1.0))
+        if random_init:
+            self.centers.assign(tf.random.normal(shape=(num_classes, feat_dims), mean=0.0, stddev=1.0))
 
     def call(self, y_pred, y_true, **kwargs):
         """
@@ -188,6 +190,7 @@ class CTCCenterLoss(Layer):
 
         distmat = tf.pow(y_pred, 2)
         distmat = tf.reduce_sum(distmat, axis=1, keepdims=True)
+        # expand to [bs, num_classes]
         distmat = tf.tile(distmat, multiples=(1, self.num_classes))
         distmat = tf.subtract(distmat, 2 * tf.matmul(y_pred, tf.transpose(self.centers)))
         distmat = tf.add(distmat, tf.transpose(tf.reduce_sum(tf.pow(self.centers, 2), axis=1, keepdims=True)))
@@ -199,7 +202,7 @@ class CTCCenterLoss(Layer):
         mask = tf.cast(mask, dtype=tf.float32)
 
         # compute loss
-        dist = tf.multiply(distmat, tf.cast(mask, dtype=tf.float32))
+        dist = tf.multiply(distmat, mask)
         # clamp dist
         dist = tf.clip_by_value(dist, clip_value_min=1e-12, clip_value_max=1e+12)
         loss = tf.reduce_sum(dist) / tf.cast(bs, dtype=tf.float32)
@@ -211,9 +214,14 @@ class CTCCenterLoss(Layer):
 if __name__ == '__main__':
     # check version of tensorflow
     print(tf.__version__)
-    loss = CTCCenterLoss()
-    features = tf.random.normal(shape=(32, 16, 128))
+    dims = 96
+    loss = CTCCenterLoss(num_classes=86, feat_dims=dims)
+    features = tf.random.normal(shape=(32, 16, dims))
+    # save as npy
+    np.save("features.npy", features.numpy())
     # labels: int32
     labels = tf.random.uniform(shape=(32, 16), minval=0, maxval=86, dtype=tf.int32)
+    # save as npy
+    np.save("labels.npy", labels.numpy())
     l = loss(features, labels)
     print(l)
