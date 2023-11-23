@@ -7,6 +7,7 @@ Various loss function in tf, some of them were implemented by official tensorflo
 
 ### CTC
 
+- [x] CTC Loss
 - [x] Focal CTC Loss
 - [ ] CTC Center Loss
 
@@ -14,10 +15,14 @@ Various loss function in tf, some of them were implemented by official tensorflo
 
 - [x] BCE Loss
 - [x] CE Loss
+- [x] Center Loss
+
+### Object Detection
+
+- [x] Smooth L1 Loss
 
 ### Segmentation
 
-- [x] Smooth L1 Loss
 - [x] Dice BCE Loss
 - [x] Dice Loss
 - [x] IoU Loss
