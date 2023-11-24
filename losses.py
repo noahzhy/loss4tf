@@ -177,7 +177,7 @@ class CTCCenterLoss(Layer):
         if random_init:
             self.centers.assign(tf.random.normal(shape=(num_classes, feat_dims), mean=0.0, stddev=1.0))
 
-    def call(self, y_pred, y_true, **kwargs):
+    def call(self, y_true, y_pred, **kwargs):
         """
         Args:
             y_pred: [batch_size, seq_len, feat_dims]
@@ -223,5 +223,5 @@ if __name__ == '__main__':
     labels = tf.random.uniform(shape=(32, 16), minval=0, maxval=86, dtype=tf.int32)
     # save as npy
     np.save("labels.npy", labels.numpy())
-    l = loss(features, labels)
+    l = loss(labels, features)
     print(l)

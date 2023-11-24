@@ -22,7 +22,7 @@ def test_ctc_center_loss(pred, target, n_class=100, dims=96):
     torch_loss = torch_loss.detach().numpy().astype(np.float32)
 
     # tf
-    tf_loss = CTCCenterLoss(num_classes=n_class, feat_dims=dims, random_init=False)(pred, target)
+    tf_loss = CTCCenterLoss(num_classes=n_class, feat_dims=dims, random_init=False)(target, pred)
     # to numpy float32
     tf_loss = tf_loss.numpy().astype(np.float32)
 
