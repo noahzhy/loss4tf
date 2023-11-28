@@ -14,16 +14,15 @@ from torch_losses import CenterLoss
 
 # test ctccenterloss between torch and tf
 def test_ctc_center_loss(pred, target, n_class=100, dims=96):
-    # torch
-    x = torch.from_numpy(pred).reshape(32 * 16, dims)
-    labels = torch.from_numpy(target).reshape(32 * 16, )
-    torch_loss = CenterLoss(num_classes=n_class, feat_dim=dims, random_init=False, use_gpu=False)(x, labels)
-    # to numpy float32
+    # data
+    features = tf.random.normal(shape=(32, 16, dims), dtype=tf.float32)
+    labels = tf.random.uniform(shape=(32, 16, 86), minval=0, maxval=86, dtype=tf.float32)
+
+    torch_loss = CenterLoss(num_classes=n_class, feat_dim=dims)([features, labels])
     torch_loss = torch_loss.detach().numpy().astype(np.float32)
 
-    # tf
-    tf_loss = CTCCenterLoss(num_classes=n_class, feat_dims=dims, random_init=False)(target, pred)
-    # to numpy float32
+    c_loss = CTCCenterLoss(num_classes=n_class, feat_dims=dims, random_init=False)
+    tf_loss = c_loss(0, [features, labels])
     tf_loss = tf_loss.numpy().astype(np.float32)
 
     # compare

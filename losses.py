@@ -159,8 +159,8 @@ class CTCCenterLoss(Layer):
     def __init__(self, 
         alpha=0.05,
         num_classes=86,
-        feat_dims=128,
-        random_init=True,
+        feat_dims=96,
+        random_init=False,
         name="ctc_center_loss",
         **kwargs):
         super(CTCCenterLoss, self).__init__(name=name, **kwargs)
@@ -178,34 +178,41 @@ class CTCCenterLoss(Layer):
             self.centers.assign(tf.random.normal(shape=(num_classes, feat_dims), mean=0.0, stddev=1.0))
 
     def call(self, y_true, y_pred, **kwargs):
-        """
-        Args:
-            y_pred: [batch_size, seq_len, feat_dims]
-            y_true: [batch_size]
-        """
-        _, _, feat_dims = tf.shape(y_pred)
-        y_pred = tf.reshape(y_pred, shape=(-1, feat_dims))
-        y_true = tf.reshape(y_true, shape=(-1, ))
-        bs = tf.shape(y_true)[0]
 
-        distmat = tf.pow(y_pred, 2)
-        distmat = tf.reduce_sum(distmat, axis=1, keepdims=True)
-        # expand to [bs, num_classes]
-        distmat = tf.tile(distmat, multiples=(1, self.num_classes))
-        distmat = tf.subtract(distmat, 2 * tf.matmul(y_pred, tf.transpose(self.centers)))
-        distmat = tf.add(distmat, tf.transpose(tf.reduce_sum(tf.pow(self.centers, 2), axis=1, keepdims=True)))
+        features, preds = y_pred[0], y_pred[1]
+        feats_reshape = tf.reshape(features, shape=(-1, self.feat_dims))
+        label = tf.argmax(preds, axis=-1)
+        label = tf.reshape(label, shape=(tf.shape(label)[0] * tf.shape(label)[1],))
+
+        bs = tf.shape(feats_reshape)[0]
+
+        feat = tf.reduce_sum(tf.pow(feats_reshape, 2), axis=1, keepdims=True)
+        feat = tf.broadcast_to(feat, shape=(bs, self.num_classes))
+
+        center = tf.reduce_sum(tf.pow(self.centers, 2), axis=1, keepdims=True)
+        center = tf.broadcast_to(center, shape=(self.num_classes, bs))
+        center = tf.cast(center, dtype=tf.float32)
+        center = tf.transpose(center)
+
+        distmat = tf.add(feat, center)
+
+        feat_dot_center = tf.matmul(feats_reshape, tf.transpose(self.centers))
+        distmat = distmat - 2.0 * feat_dot_center
 
         # mask
-        classes = tf.range(self.num_classes, dtype=tf.int32)
-        labels = tf.tile(tf.expand_dims(y_true, axis=1), multiples=(1, self.num_classes))
-        mask = tf.math.equal(labels, classes)
+        classes = tf.range(self.num_classes, dtype=tf.int64)
+        label = tf.broadcast_to(tf.expand_dims(label, axis=1), shape=(bs, self.num_classes))
+        mask = tf.math.equal(
+            tf.broadcast_to(classes, shape=(bs, self.num_classes)),
+            label)
         mask = tf.cast(mask, dtype=tf.float32)
 
         # compute loss
         dist = tf.multiply(distmat, mask)
+
         # clamp dist
         dist = tf.clip_by_value(dist, clip_value_min=1e-12, clip_value_max=1e+12)
-        loss = tf.reduce_sum(dist) / tf.cast(bs, dtype=tf.float32)
+        loss = tf.reduce_mean(dist)
 
         return loss
 
@@ -215,13 +222,12 @@ if __name__ == '__main__':
     # check version of tensorflow
     print(tf.__version__)
     dims = 96
-    loss = CTCCenterLoss(num_classes=86, feat_dims=dims)
-    features = tf.random.normal(shape=(32, 16, dims))
-    # save as npy
+    loss = CTCCenterLoss()
+    features = tf.random.normal(shape=(32, 16, dims), dtype=tf.float32)
     np.save("features.npy", features.numpy())
-    # labels: int32
-    labels = tf.random.uniform(shape=(32, 16), minval=0, maxval=86, dtype=tf.int32)
-    # save as npy
+
+    labels = tf.random.uniform(shape=(32, 16, 86), minval=0, maxval=86, dtype=tf.float32)
     np.save("labels.npy", labels.numpy())
-    l = loss(labels, features)
+    # f_c = tf.concat([features, labels], axis=-1)
+    l = loss(0, [features, labels])
     print(l)

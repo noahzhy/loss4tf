@@ -5,63 +5,63 @@ import numpy as np
 
 
 class CenterLoss(nn.Module):
-    """Center loss.
-    
-    Reference:
-    Wen et al. A Discriminative Feature Learning Approach for Deep Face Recognition. ECCV 2016.
-    
-    Args:
-        num_classes (int): number of classes.
-        feat_dim (int): feature dimension.
     """
-    def __init__(self, num_classes=10, feat_dim=128, random_init=True, use_gpu=True):
-        super(CenterLoss, self).__init__()
+    Reference: Wen et al. A Discriminative Feature Learning Approach for Deep Face Recognition. ECCV 2016.
+    """
 
+    def __init__(self, num_classes=86, feat_dim=96):
+        super().__init__()
         self.num_classes = num_classes
         self.feat_dim = feat_dim
-        self.random_init = random_init
-        self.use_gpu = use_gpu
+        self.centers = torch.zeros([self.num_classes, self.feat_dim], dtype=torch.float32)
 
-        if self.use_gpu:
-            self.centers = nn.Parameter(torch.zeros(self.num_classes, self.feat_dim).cuda())
-        else:
-            self.centers = nn.Parameter(torch.zeros(self.num_classes, self.feat_dim))
+    def __call__(self, pred):
+        features, predicts = pred
 
-        if self.random_init:
-            nn.init.normal_(self.centers, mean=0, std=1)
+        feats_reshape = torch.reshape(features, [-1, features.shape[-1]])
+        label = torch.argmax(predicts, axis=2)
+        label = torch.reshape(label, [label.shape[0] * label.shape[1]]).float()
 
-    def forward(self, x, labels):
-        """
-        Args:
-            x: feature matrix with shape (batch_size, feat_dim).
-            labels: ground truth labels with shape (batch_size).
-        """
-        batch_size = x.size(0)
-        distmat = torch.pow(x, 2).sum(dim=1, keepdim=True).expand(batch_size, self.num_classes) + \
-                  torch.pow(self.centers, 2).sum(dim=1, keepdim=True).expand(self.num_classes, batch_size).t()
-        # distmat.addmm_(1, -2, x, self.centers.t())
-        distmat.addmm_(x, self.centers.t(), beta=1, alpha=-2)
+        batch_size = feats_reshape.shape[0]
 
+        #calc l2 distance between feats and centers  
+        _feat = torch.sum(torch.square(feats_reshape),
+                                 axis=1,
+                                 keepdim=True)
+        _feat = torch.Tensor.expand(_feat, [batch_size, self.num_classes])
+
+        _center = torch.sum(torch.square(self.centers), axis=1, keepdim=True)
+        _center = torch.Tensor.expand(_center, [self.num_classes, batch_size]).float()
+        _center = _center.T
+
+        distmat = torch.add(_feat, _center)
+        feat_dot_center = torch.matmul(feats_reshape, self.centers.T)
+        distmat = distmat - 2.0 * feat_dot_center
+
+        # generate the mask
         classes = torch.arange(self.num_classes).long()
-        if self.use_gpu: classes = classes.cuda()
-        labels = labels.unsqueeze(1).expand(batch_size, self.num_classes)
-        mask = labels.eq(classes.expand(batch_size, self.num_classes))
+        label = torch.Tensor.expand(torch.unsqueeze(label, 1), (batch_size, self.num_classes))
+        mask = torch.Tensor.eq(
+            torch.Tensor.expand(classes, [batch_size, self.num_classes]),
+            label)
+        dist = torch.multiply(distmat, mask)
 
-        dist = distmat * mask.float()
-        loss = dist.clamp(min=1e-12, max=1e+12).sum() / batch_size
-
+        dist = torch.clip(dist, min=1e-12, max=1e+12)
+        # mean
+        loss = torch.mean(dist)
         return loss
 
 
 if __name__ == '__main__':
     dims = 96
-    loss = CenterLoss(num_classes=86, feat_dim=dims, use_gpu=False)
+    loss = CenterLoss(num_classes=86, feat_dim=dims)
     # load from npy file
     x = np.load("features.npy")
-    # x = torch.randn(32 * 16, dims)
-    x = torch.from_numpy(x).reshape(32 * 16, dims)
-    # labels = torch.randint(0, 86, (32 * 16, ))
+    x = torch.from_numpy(x).float()
     labels = np.load("labels.npy")
-    labels = torch.from_numpy(labels).reshape(32 * 16, )
-    l = loss(x, labels)
+    labels = torch.from_numpy(labels).long()
+
+    print(x.max(), x.min())
+    print(labels.max(), labels.min())
+    l = loss([x, labels])
     print(l)
